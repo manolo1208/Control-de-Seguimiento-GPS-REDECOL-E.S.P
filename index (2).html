@@ -1,0 +1,218 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#2563eb" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="shortcut icon" href="https://cdn-icons-png.flaticon.com/512/854/854878.png" />
+  <title>REDECOL E.S.P – Control Operativo</title>
+  
+  <!-- Dependencias -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- React y Babel para que el navegador entienda el código directamente -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    body { font-family: 'Inter', sans-serif; background-color: #f8fafc; margin: 0; padding: 0; }
+    #loading-screen {
+      position: fixed; inset: 0; background: #2563eb; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; z-index: 9999; color: white; transition: opacity 0.5s ease;
+    }
+    .leaflet-container { height: 100%; width: 100%; border-radius: 1rem; z-index: 10; }
+    .glass { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px); }
+  </style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.38.0"
+  }
+}
+</script>
+</head>
+<body>
+  <div id="loading-screen">
+    <div class="bg-white p-4 rounded-3xl mb-4 shadow-2xl animate-bounce">
+       <svg class="w-12 h-12 text-blue-700" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/></svg>
+    </div>
+    <h2 class="text-xl font-black uppercase tracking-widest">REDECOL E.S.P</h2>
+    <p class="text-blue-100 text-xs mt-2">Iniciando Sistema...</p>
+  </div>
+
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback } = React;
+
+    // --- COMPONENTE DE MAPA ---
+    const MapView = ({ points, operator }) => {
+      const mapRef = useRef(null);
+      const mapInstance = useRef(null);
+      const polylineRef = useRef(null);
+      const markerRef = useRef(null);
+
+      useEffect(() => {
+        if (!mapInstance.current && mapRef.current) {
+          mapInstance.current = L.map(mapRef.current, { zoomControl: false }).setView([7.0653, -73.8547], 14);
+          L.tileLayer('https://{s}.tile.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png').addTo(mapInstance.current);
+        }
+      }, []);
+
+      useEffect(() => {
+        if (mapInstance.current && points.length > 0) {
+          const latlngs = points.map(p => [p.lat, p.lng]);
+          if (polylineRef.current) polylineRef.current.setLatLngs(latlngs);
+          else polylineRef.current = L.polyline(latlngs, { color: '#2563eb', weight: 4 }).addTo(mapInstance.current);
+
+          const last = latlngs[latlngs.length - 1];
+          if (markerRef.current) markerRef.current.setLatLng(last);
+          else markerRef.current = L.marker(last).addTo(mapInstance.current).bindPopup(`<b>${operator}</b>`).openPopup();
+
+          mapInstance.current.panTo(last);
+        }
+      }, [points]);
+
+      return (
+        <div className="w-full h-full relative">
+          <div ref={mapRef} className="absolute inset-0" />
+          <div className="absolute top-4 left-4 z-[400] glass p-2 rounded-lg shadow-sm border border-slate-200">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-ping"></div>
+              <span className="text-[10px] font-bold text-slate-600 uppercase">Señal GPS Activa</span>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // --- APP PRINCIPAL ---
+    const App = () => {
+      const [operador, setOperador] = useState('');
+      const [isTracking, setIsTracking] = useState(false);
+      const [points, setPoints] = useState([]);
+      const [syncStatus, setSyncStatus] = useState('idle');
+      const watchId = useRef(null);
+
+      const startTracking = () => {
+        if (!operador) return alert('Escribe el nombre del operario');
+        setIsTracking(true);
+        setPoints([]);
+        
+        watchId.current = navigator.geolocation.watchPosition(
+          (pos) => {
+            const newPoint = { 
+              lat: pos.coords.latitude, 
+              lng: pos.coords.longitude, 
+              timestamp: new Date().toISOString() 
+            };
+            setPoints(prev => [...prev, newPoint]);
+          },
+          (err) => alert('Error GPS: Activa la ubicación'),
+          { enableHighAccuracy: true }
+        );
+      };
+
+      const stopTracking = () => {
+        if (watchId.current) navigator.geolocation.clearWatch(watchId.current);
+        setIsTracking(false);
+        setSyncStatus('success');
+        setTimeout(() => setSyncStatus('idle'), 3000);
+      };
+
+      const exportCSV = () => {
+        const content = "Fecha,Lat,Lng\n" + points.map(p => `${p.timestamp},${p.lat},${p.lng}`).join("\n");
+        const blob = new Blob([content], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Ruta_${operador}.csv`;
+        a.click();
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col">
+          <header className="bg-blue-600 text-white p-4 shadow-lg flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="bg-white text-blue-600 p-1 rounded font-black text-xs">RE</div>
+              <h1 className="text-sm font-bold uppercase tracking-widest">REDECOL E.S.P</h1>
+            </div>
+            {syncStatus === 'success' && <span className="bg-green-400 text-[10px] px-2 py-1 rounded-full font-bold">Ruta Guardada</span>}
+          </header>
+
+          <main className="flex-1 p-4 max-w-lg mx-auto w-full space-y-4">
+            <div className="bg-white p-5 rounded-3xl shadow-sm border border-slate-200">
+              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Operario de Turno</label>
+              <input 
+                type="text" 
+                value={operador}
+                onChange={(e) => setOperador(e.target.value)}
+                placeholder="Nombre completo..."
+                className="w-full mt-1 p-3 bg-slate-50 rounded-xl border-none text-blue-900 font-bold focus:ring-2 focus:ring-blue-500"
+                disabled={isTracking}
+              />
+              
+              <div className="mt-4">
+                {!isTracking ? (
+                  <button onClick={startTracking} className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-blue-200 shadow-xl active:scale-95 transition-transform">
+                    INICIAR SEGUIMIENTO
+                  </button>
+                ) : (
+                  <button onClick={stopTracking} className="w-full bg-red-500 text-white font-bold py-4 rounded-2xl shadow-red-200 shadow-xl active:scale-95 transition-transform">
+                    DETENER Y GUARDAR
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="h-80 bg-slate-200 rounded-3xl overflow-hidden shadow-inner border-4 border-white">
+              <MapView points={points} operator={operador} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+               <button 
+                 onClick={exportCSV} 
+                 disabled={points.length === 0}
+                 className="bg-slate-800 text-white text-[11px] font-bold py-3 rounded-xl disabled:opacity-30"
+               >
+                 DESCARGAR CSV
+               </button>
+               <div className="bg-white border p-3 rounded-xl flex flex-col justify-center items-center">
+                 <span className="text-[9px] text-slate-400 font-bold">PUNTOS</span>
+                 <span className="text-sm font-black text-blue-600">{points.length}</span>
+               </div>
+            </div>
+          </main>
+          
+          <footer className="p-4 text-center">
+            <p className="text-[10px] text-slate-400 font-medium">Sistema de Supervisión v2.0 • REDECOL 2024</p>
+          </footer>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+
+    // Quitar pantalla de carga
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const l = document.getElementById('loading-screen');
+        if(l) l.style.opacity = '0';
+        setTimeout(() => l?.remove(), 500);
+      }, 1500);
+    });
+  </script>
+</body>
+</html>
