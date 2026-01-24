@@ -1,8 +1,0 @@
-
-{
-  "name": "REDECOL Operational Control",
-  "description": "Professional GPS tracking and reporting system for REDECOL E.S.P., designed for SUI compliance and operational efficiency.",
-  "requestFramePermissions": [
-    "geolocation"
-  ]
-}
